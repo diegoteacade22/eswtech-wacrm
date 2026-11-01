@@ -1,5 +1,11 @@
 name: Migrations
 
+# Validation only. This workflow never links a Supabase project and
+# never runs `db push`, `migration up --linked`, or any other command
+# that can reach a hosted database. It boots Postgres in Docker on the
+# runner, replays supabase/migrations there, and checks the result.
+# Do not add secrets, a production environment, or a linked project ref.
+#
 # Replaces the "Supabase Preview" check, which never worked: it fired
 # only on migration changes and then either 404'd in four seconds
 # ("Postgres config not found") or hung forever waiting on a branch
@@ -35,12 +41,28 @@ concurrency:
   group: migrations-${{ github.ref }}
   cancel-in-progress: true
 
+# Checkout only. The database is a container on the runner.
+permissions:
+  contents: read
+
 jobs:
   apply:
-    name: Apply to a clean database
+    name: Validate on a local database
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Refuse a hosted database target
+        run: |
+          set -eu
+          if [ -n "${SUPABASE_ACCESS_TOKEN:-}" ] || [ -n "${SUPABASE_DB_PASSWORD:-}" ] || [ -n "${SUPABASE_DB_URL:-}" ] || [ -n "${DATABASE_URL:-}" ]; then
+            echo "Hosted database credentials are present. This workflow only validates migrations against Postgres in Docker on the runner."
+            exit 1
+          fi
+          if [ -f supabase/.temp/project-ref ] || [ -f supabase/.temp/pooler-url ]; then
+            echo "A linked Supabase project is present. This workflow must not run against it."
+            exit 1
+          fi
 
       - name: Install the Supabase CLI
         uses: supabase/setup-cli@v3
@@ -50,16 +72,18 @@ jobs:
           # bump in a PR, not a Tuesday where main goes red.
           version: 2.113.0
 
-      - name: Start Postgres
+      - name: Start local Postgres
         run: supabase db start
 
       # `db start` already applies the migrations on a cold volume, but
       # only on a cold volume — it is a no-op against a database that
-      # already exists. `db reset` drops and rebuilds unconditionally,
-      # so this step, not the one above, is the guarantee that every
-      # migration ran in filename order against nothing. It fails on the
-      # first statement Postgres rejects. --no-seed because there is no
-      # seed script and this is about schema, not data.
+      # already exists. `db reset --local` drops and rebuilds the
+      # runner's container unconditionally, so this step, not the one
+      # above, is the guarantee that every migration ran in filename
+      # order against nothing. It fails on the first statement Postgres
+      # rejects. --no-seed because there is no seed script and this is
+      # about schema, not data. Keep `--local`: without it the CLI can
+      # target a linked project.
       - name: Replay every migration from scratch
         run: supabase db reset --local --no-seed
 
