@@ -12,6 +12,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Checkout plus the npm cache. No packages, pull requests, or id-tokens.
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   check:
     name: Lint, typecheck, test, build
@@ -34,7 +39,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # Node 20 went end-of-life on 2026-04-30. Node 22 is the
+          # supported LTS this app's CI runs on (through 2027-04-30).
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
